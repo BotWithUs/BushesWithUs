@@ -120,7 +120,30 @@ class BushesWithUs(
                 }
             }
         }
+        loadConfiguration()
         return true
+    }
+
+    // Save values that need to persist to the script configuration properties.
+     fun saveConfiguration() {
+        configuration.addProperty("bushType", bushType.get().toString())
+        configuration.addProperty("botState", botState.name)
+        configuration.save()
+    }
+
+    // Attempt to load the persistent properties from the script configuration.
+    fun loadConfiguration() {
+        try {
+            bushType.set(configuration.getProperty("bushType").toInt())
+            botState = BotState.valueOf(configuration.getProperty("botState"))
+            println("Persistent data loaded successfully.")
+            println("Bot state: $botState")
+            println("Bush type: ${Bush.entries[bushType.get()].name}")
+        } catch (e: Exception) {
+            println("Failed to load persistent properties. Using defaults.")
+            e.printStackTrace()
+        }
+
     }
 
     override fun onLoop() {
@@ -138,6 +161,9 @@ class BushesWithUs(
         // Update our statistics based on values that may have changed since last onLoop iteration
         // For example, our inventory update event could have fired, and we need to update the numbers ImGui displays.
         updateStatistics()
+
+        // Save current state
+        saveConfiguration()
 
         // Handle the possible bot states
         when (botState) {
@@ -176,7 +202,8 @@ class BushesWithUs(
         //Next, handle nutritous gas to boost xp.
         val nutritiousGas: SpotAnimation? = SpotAnimationQuery.newQuery().ids(7620).results().nearest()
         if (nutritiousGas != null) {
-            val success: Boolean = SceneObjectQuery.newQuery().name(bushName).option("Cultivate").results().nearest()!!.interact("Cultivate")
+            val nearestResult = SceneObjectQuery.newQuery().name(bushName).option("Cultivate").results()?.nearest()
+            val success: Boolean = nearestResult?.interact("Cultivate") ?: false
             println("Interacted nutritious gas: $success")
             if (success) {
                 gasDispersed++
