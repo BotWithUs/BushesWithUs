@@ -8,7 +8,6 @@ import net.botwithus.rs3.events.impl.SkillUpdateEvent
 import net.botwithus.rs3.game.Area
 import net.botwithus.rs3.game.Client
 import net.botwithus.rs3.game.Coordinate
-import net.botwithus.rs3.game.ScenePosition
 import net.botwithus.rs3.game.minimenu.MiniMenu
 import net.botwithus.rs3.game.minimenu.actions.SelectableAction
 import net.botwithus.rs3.game.movement.Movement
@@ -25,7 +24,6 @@ import net.botwithus.rs3.game.scene.entities.characters.player.LocalPlayer
 import net.botwithus.rs3.game.scene.entities.`object`.SceneObject
 import net.botwithus.rs3.game.skills.Skills
 import net.botwithus.rs3.game.vars.VarManager
-import net.botwithus.rs3.imgui.NativeBoolean
 import net.botwithus.rs3.imgui.NativeInteger
 import net.botwithus.rs3.input.GameInput
 import net.botwithus.rs3.script.Execution
@@ -70,7 +68,7 @@ class BushesWithUs(
     var hetPiecesPerHour = 0
     var levelsPerHour = 0
 
-    val compostPattern = Regex.getPatternForContainingOneOf("Compost", "Supercompost")
+    val compostPattern = Regex.getPatternForContainingOneOf("Compost", "Supercompost", "Ultracompost")
     val bankNorth = Area.Rectangular(Coordinate(3378, 3267, 0), Coordinate(3383, 3270, 0))
     val bankSouth = Area.Rectangular(Coordinate(3356, 3197, 0), Coordinate(3358, 3198, 0))
 
@@ -87,10 +85,10 @@ class BushesWithUs(
     }
 
     enum class Bush(val bushArea: Area, val varbitId: Int) {
-        Rose(Area.Circular(Coordinate(3357, 3257, 0), 2.0), 50832),
-        Iris(Area.Circular(Coordinate(3386, 3256, 0), 2.0), 50833),
-        Hydrangea(Area.Circular(Coordinate(3387, 3206, 0), 2.0), 50834),
-        Hollyhock(Area.Circular(Coordinate(3353, 3217, 0), 2.0), 50835);
+        Rose(Area.Circular(Coordinate(3357, 3257, 0), 3.0), 50832),
+        Iris(Area.Circular(Coordinate(3386, 3256, 0), 3.0), 50833),
+        Hydrangea(Area.Circular(Coordinate(3387, 3206, 0), 3.0), 50834),
+        Hollyhock(Area.Circular(Coordinate(3353, 3217, 0), 3.0), 50835);
 
 
         companion object {
@@ -210,14 +208,15 @@ class BushesWithUs(
     }
 
     private fun handleBanking(player: LocalPlayer): Long {
-        if (bankNorth.distanceTo(player) < bankSouth.distanceTo(player)) {
+        if (bankNorth.distanceTo(Bush.entries[bushType.get()].bushArea) < bankSouth.distanceTo(Bush.entries[bushType.get()].bushArea)) {
             if (bankNorth.contains(player.coordinate)) {
                 println("Banking at north bank.")
+                return handleBank()
             } else {
                 val coord = bankNorth.randomWalkableCoordinate
                 val path = NavPath.resolve(coord)
-                val results = Movement.traverse(path)
                 println("Attempting to walk to north bank.")
+                val results = Movement.traverse(path)
                 if (results == TraverseEvent.State.NO_PATH) {
                     println("Failed to find path to north bank.")
                     println(coord)
@@ -229,53 +228,12 @@ class BushesWithUs(
         } else {
             if (bankSouth.contains(player.coordinate)) {
                 println("Banking at south bank.")
-                if (Bank.isOpen()) {
-                    val superCompost = InventoryItemQuery.newQuery(95).name("Supercompost").stack(1, Int.MAX_VALUE).results().firstOrNull()
-                    if (superCompost == null) {
-                        println("Supercompost not found in bank, skipping...")
-                    } else {
-                        val success = ComponentQuery.newQuery(517).componentIndex(195).itemName("Supercompost")
-                            .itemAmount(1, Int.MAX_VALUE).results().firstOrNull()?.interact("Withdraw-X")
-                        println("Withdrew supercompost: $success")
-                        if (success == true) {
-                            Execution.delay(random.nextLong(950,1650))
-                            GameInput.setIntInput(20)
-                            botState = BotState.SKILLING
-                            return random.nextLong(1345,2456)
-                        }
-                    }
-                    val compost = InventoryItemQuery.newQuery(95).name("Compost").stack(1, Int.MAX_VALUE).results().firstOrNull()
-                    if (compost == null) {
-                        println("Compost not found in backpack, skipping...")
-                        useCompost = false
-                    } else {
-                        val success = ComponentQuery.newQuery(517).componentIndex(195).itemName("Compost")
-                            .itemAmount(1, Int.MAX_VALUE).results().firstOrNull()?.interact("Withdraw-X")
-                        println("Withdrew compost: $success")
-                        if (success == true) {
-                            Execution.delay(random.nextLong(950,1650))
-                            GameInput.setIntInput(20)
-                            botState = BotState.SKILLING
-                            return random.nextLong(1345,2456)
-                        }
-                    }
-                    botState = BotState.SKILLING
-                } else {
-                    val bank = SceneObjectQuery.newQuery().name("Bank chest").option("Use").results().nearest()
-                    if (bank != null) {
-                        val succes = bank.interact("Use")
-                        println("Bank chest interacted: $succes")
-                        if (succes)
-                            return random.nextLong(1250, 2345)
-                    } else {
-                        println("Bank chest not found.")
-                    }
-                }
+                return handleBank()
             } else {
                 val coord = bankSouth.randomWalkableCoordinate
                 val path = NavPath.resolve(coord)
+                println("Attempting to walk to south bank.")
                 val results = Movement.traverse(path)
-                println("Attempting to walk south bank.")
                 if (results == TraverseEvent.State.NO_PATH) {
                     println("Failed to find path to south bank.")
                     println(coord)
@@ -288,18 +246,48 @@ class BushesWithUs(
         return random.nextLong(350, 450)
     }
 
+    private fun handleBank(): Long {
+        if (Bank.isOpen()) {
+            val compost = InventoryItemQuery.newQuery(95).name(compostPattern).stack(1, Int.MAX_VALUE).results().firstOrNull()
+            if (compost == null) {
+                println("Compost not found in bank, skipping...")
+            } else {
+                val success = ComponentQuery.newQuery(517).componentIndex(195).itemName(compost.name).itemAmount(1, Int.MAX_VALUE).results().firstOrNull()?.interact("Withdraw-X")
+                println("Withdrew supercompost: $success")
+                if (success == true) {
+                    Execution.delay(random.nextLong(950,1650))
+                    GameInput.setIntInput(20)
+                    botState = BotState.SKILLING
+                    return random.nextLong(1345,2456)
+                }
+            }
+            botState = BotState.SKILLING
+        } else {
+            val bank = SceneObjectQuery.newQuery().name("Bank chest").option("Use").results().nearest()
+            if (bank != null) {
+                val succes = bank.interact("Use")
+                println("Bank chest interacted: $succes")
+                if (succes)
+                    return random.nextLong(1250, 2345)
+            } else {
+                println("Bank chest not found.")
+            }
+        }
+        return random.nextLong(1250, 2345)
+    }
+
     private fun handleSkilling(player: LocalPlayer): Long {
 
         if (!Bush.entries[bushType.get()].bushArea.contains(player)) {
-            if (useCompost && !Backpack.contains("Compost") && !Backpack.contains("Supercompost")) {
+            if (useCompost && !Backpack.contains("Compost") && !Backpack.contains("Supercompost") && !Backpack.contains("Ultracompost")) {
                 println("No compost in backpack, heading to resupply.")
                 botState = BotState.BANKING
                 return random.nextLong(350, 768)
             }
             //go there! Damn, nav system is cool.
             val path = NavPath.resolve(Bush.entries[bushType.get()].bushArea.randomWalkableCoordinate)
-            val results = Movement.traverse(path)
             println("Traversing to bush.")
+            val results = Movement.traverse(path)
             if (results == TraverseEvent.State.NO_PATH) {
                 println("Failed to find path to bush.")
             } else {
