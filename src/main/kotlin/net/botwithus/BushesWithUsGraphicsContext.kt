@@ -27,6 +27,7 @@ class BushesWithUsGraphicsContext(
                     }
                     ImGui.Combo("Bush Type", script.bushType, *BushesWithUs.Bush.toStringArray())
                     ImGui.EndTabItem()
+                    script.useCompost = ImGui.Checkbox("Use Compost", script.useCompost)
                 }
                 if (ImGui.BeginTabItem("Stats", ImGuiWindowFlag.None.value)) {
                     val elapsedTime: Long = System.currentTimeMillis() - script.startTime
@@ -45,7 +46,7 @@ class BushesWithUsGraphicsContext(
                     ImGui.Text(String.format("Levels Gained: %d | Xp gained %,d", script.levelsGained, script.xpGained))
                     ImGui.Text(String.format("Levels/hr          %,d | Xp/hr %,d", script.levelsPerHour, script.xpPerHour))
                     ImGui.Separator()
-                    ImGui.Text(String.format("Roses:     %d | Irises:     %d | Hydrangeas:     %d |     Hollyhocks: %d", script.rosesCollected, script.irisCollected, script.hydrangeaCollected, script.hollyhockCollected))
+                    ImGui.Text(String.format("Roses:     %d | Irises:     %d | Hydrangeas:     %d | Hollyhocks:     %d", script.rosesCollected, script.irisCollected, script.hydrangeaCollected, script.hollyhockCollected))
                     ImGui.Text(String.format("Roses/hr: %,d | Irises/hr: %,d | Hydrangeas/hr: %,d | Hollyhocks/hr: %,d", script.rosesPerHour, script.irisPerHour, script.hydrangeaPerHour, script.hollyhockPerHour))
                     ImGui.Separator()
                     ImGui.Text(String.format("Golden roses: %d | Golden roses/hr: %,d", script.goldenRosesCollected, script.goldenRosesPerHour))

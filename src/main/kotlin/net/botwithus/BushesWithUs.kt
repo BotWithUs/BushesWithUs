@@ -1,18 +1,33 @@
 package net.botwithus
 
+import net.botwithus.api.game.hud.inventories.Backpack
+import net.botwithus.api.game.hud.inventories.Bank
 import net.botwithus.internal.scripts.ScriptDefinition
 import net.botwithus.rs3.events.impl.InventoryUpdateEvent
 import net.botwithus.rs3.events.impl.SkillUpdateEvent
+import net.botwithus.rs3.game.Area
 import net.botwithus.rs3.game.Client
+import net.botwithus.rs3.game.Coordinate
+import net.botwithus.rs3.game.ScenePosition
+import net.botwithus.rs3.game.minimenu.MiniMenu
+import net.botwithus.rs3.game.minimenu.actions.SelectableAction
+import net.botwithus.rs3.game.movement.Movement
+import net.botwithus.rs3.game.movement.NavPath
+import net.botwithus.rs3.game.movement.TraverseEvent
 import net.botwithus.rs3.game.queries.builders.animations.SpotAnimationQuery
 import net.botwithus.rs3.game.queries.builders.characters.NpcQuery
+import net.botwithus.rs3.game.queries.builders.components.ComponentQuery
+import net.botwithus.rs3.game.queries.builders.items.InventoryItemQuery
 import net.botwithus.rs3.game.queries.builders.objects.SceneObjectQuery
 import net.botwithus.rs3.game.scene.entities.animation.SpotAnimation
 import net.botwithus.rs3.game.scene.entities.characters.npc.Npc
 import net.botwithus.rs3.game.scene.entities.characters.player.LocalPlayer
 import net.botwithus.rs3.game.scene.entities.`object`.SceneObject
 import net.botwithus.rs3.game.skills.Skills
+import net.botwithus.rs3.game.vars.VarManager
+import net.botwithus.rs3.imgui.NativeBoolean
 import net.botwithus.rs3.imgui.NativeInteger
+import net.botwithus.rs3.input.GameInput
 import net.botwithus.rs3.script.Execution
 import net.botwithus.rs3.script.LoopingScript
 import net.botwithus.rs3.script.config.ScriptConfig
@@ -30,6 +45,7 @@ class BushesWithUs(
     private val random: Random = Random()
     var botState: BotState = BotState.IDLE
     var bushType: NativeInteger = NativeInteger(0)
+    var useCompost = false
     var xpGained: Int = 0
     var gasDispersed: Int = 0
     var scarabsShooed: Int = 0
@@ -54,6 +70,10 @@ class BushesWithUs(
     var hetPiecesPerHour = 0
     var levelsPerHour = 0
 
+    val compostPattern = Regex.getPatternForContainingOneOf("Compost", "Supercompost")
+    val bankNorth = Area.Rectangular(Coordinate(3378, 3267, 0), Coordinate(3383, 3270, 0))
+    val bankSouth = Area.Rectangular(Coordinate(3356, 3197, 0), Coordinate(3358, 3198, 0))
+
     private var animDeadCount = 0
 
     var ttl: String = "You ain't gonna level sitting around!"
@@ -62,14 +82,16 @@ class BushesWithUs(
         //define your bot states here
         IDLE,
         SKILLING,
+        BANKING,
         //etc..
     }
 
-    enum class Bush {
-        Rose,
-        Iris,
-        Hydrangea,
-        Hollyhock;
+    enum class Bush(val bushArea: Area, val varbitId: Int) {
+        Rose(Area.Circular(Coordinate(3357, 3257, 0), 2.0), 50832),
+        Iris(Area.Circular(Coordinate(3386, 3256, 0), 2.0), 50833),
+        Hydrangea(Area.Circular(Coordinate(3387, 3206, 0), 2.0), 50834),
+        Hollyhock(Area.Circular(Coordinate(3353, 3217, 0), 2.0), 50835);
+
 
         companion object {
             fun toStringArray(): Array<String> {
@@ -115,7 +137,7 @@ class BushesWithUs(
                         goldenRosesCollected += it.newItem.stackSize - it.oldItem.stackSize
                     }
                     "Piece of Het" -> {
-                        piecesOfHet = it.newItem.stackSize - it.oldItem.stackSize
+                        piecesOfHet += it.newItem.stackSize - it.oldItem.stackSize
                     }
                 }
             }
@@ -128,6 +150,7 @@ class BushesWithUs(
      fun saveConfiguration() {
         configuration.addProperty("bushType", bushType.get().toString())
         configuration.addProperty("botState", botState.name)
+        configuration.addProperty("useCompost", useCompost.toString())
         configuration.save()
     }
 
@@ -136,9 +159,11 @@ class BushesWithUs(
         try {
             bushType.set(configuration.getProperty("bushType").toInt())
             botState = BotState.valueOf(configuration.getProperty("botState"))
+            useCompost = configuration.getProperty("useCompost").toBoolean()
             println("Persistent data loaded successfully.")
             println("Bot state: $botState")
             println("Bush type: ${Bush.entries[bushType.get()].name}")
+            println("Use compost: $useCompost")
         } catch (e: Exception) {
             println("Failed to load persistent properties. Using defaults.")
             e.printStackTrace()
@@ -172,6 +197,10 @@ class BushesWithUs(
                 Execution.delay(handleSkilling(player))
                 return
             }
+            BotState.BANKING -> {
+                Execution.delay(handleBanking(player))
+                return
+            }
             BotState.IDLE -> {
                 // Delay and do nothing, we're in the idle state.
                 Execution.delay(random.nextLong(2500,5500))
@@ -180,7 +209,105 @@ class BushesWithUs(
         }
     }
 
+    private fun handleBanking(player: LocalPlayer): Long {
+        if (bankNorth.distanceTo(player) < bankSouth.distanceTo(player)) {
+            if (bankNorth.contains(player.coordinate)) {
+                println("Banking at north bank.")
+            } else {
+                val coord = bankNorth.randomWalkableCoordinate
+                val path = NavPath.resolve(coord)
+                val results = Movement.traverse(path)
+                println("Attempting to walk to north bank.")
+                if (results == TraverseEvent.State.NO_PATH) {
+                    println("Failed to find path to north bank.")
+                    println(coord)
+                } else {
+                    println("Walked to north bank.")
+                }
+                return random.nextLong(350, 450)
+            }
+        } else {
+            if (bankSouth.contains(player.coordinate)) {
+                println("Banking at south bank.")
+                if (Bank.isOpen()) {
+                    val superCompost = InventoryItemQuery.newQuery(95).name("Supercompost").stack(1, Int.MAX_VALUE).results().firstOrNull()
+                    if (superCompost == null) {
+                        println("Supercompost not found in bank, skipping...")
+                    } else {
+                        val success = ComponentQuery.newQuery(517).componentIndex(195).itemName("Supercompost")
+                            .itemAmount(1, Int.MAX_VALUE).results().firstOrNull()?.interact("Withdraw-X")
+                        println("Withdrew supercompost: $success")
+                        if (success == true) {
+                            Execution.delay(random.nextLong(950,1650))
+                            GameInput.setIntInput(20)
+                            botState = BotState.SKILLING
+                            return random.nextLong(1345,2456)
+                        }
+                    }
+                    val compost = InventoryItemQuery.newQuery(95).name("Compost").stack(1, Int.MAX_VALUE).results().firstOrNull()
+                    if (compost == null) {
+                        println("Compost not found in backpack, skipping...")
+                        useCompost = false
+                    } else {
+                        val success = ComponentQuery.newQuery(517).componentIndex(195).itemName("Compost")
+                            .itemAmount(1, Int.MAX_VALUE).results().firstOrNull()?.interact("Withdraw-X")
+                        println("Withdrew compost: $success")
+                        if (success == true) {
+                            Execution.delay(random.nextLong(950,1650))
+                            GameInput.setIntInput(20)
+                            botState = BotState.SKILLING
+                            return random.nextLong(1345,2456)
+                        }
+                    }
+                    botState = BotState.SKILLING
+                } else {
+                    val bank = SceneObjectQuery.newQuery().name("Bank chest").option("Use").results().nearest()
+                    if (bank != null) {
+                        val succes = bank.interact("Use")
+                        println("Bank chest interacted: $succes")
+                        if (succes)
+                            return random.nextLong(1250, 2345)
+                    } else {
+                        println("Bank chest not found.")
+                    }
+                }
+            } else {
+                val coord = bankSouth.randomWalkableCoordinate
+                val path = NavPath.resolve(coord)
+                val results = Movement.traverse(path)
+                println("Attempting to walk south bank.")
+                if (results == TraverseEvent.State.NO_PATH) {
+                    println("Failed to find path to south bank.")
+                    println(coord)
+                } else {
+                    println("Walked to south bank.")
+                }
+                return random.nextLong(350, 450)
+            }
+        }
+        return random.nextLong(350, 450)
+    }
+
     private fun handleSkilling(player: LocalPlayer): Long {
+
+        if (!Bush.entries[bushType.get()].bushArea.contains(player)) {
+            if (useCompost && !Backpack.contains("Compost") && !Backpack.contains("Supercompost")) {
+                println("No compost in backpack, heading to resupply.")
+                botState = BotState.BANKING
+                return random.nextLong(350, 768)
+            }
+            //go there! Damn, nav system is cool.
+            val path = NavPath.resolve(Bush.entries[bushType.get()].bushArea.randomWalkableCoordinate)
+            val results = Movement.traverse(path)
+            println("Traversing to bush.")
+            if (results == TraverseEvent.State.NO_PATH) {
+                println("Failed to find path to bush.")
+            } else {
+                println("Walking to bush.")
+            }
+            return random.nextLong(350, 768)
+        }
+
         // Create a bush name pattern from our Bush enum and the user's UI selection.
         val bushName: Pattern = Regex.getPatternForContainsString(Bush.entries[bushType.get()].name)
 
@@ -217,7 +344,7 @@ class BushesWithUs(
             val success: Boolean = grownBush.interact("Harvest")
             println("Interacted grown bush: $success")
             if (success)
-                return random.nextLong(305,1254)
+                return random.nextLong(1234,2234)
         }
 
         // The animation for bush harvesting is very quick, and loops frequently.
@@ -245,12 +372,35 @@ class BushesWithUs(
         //At this point, check if we need to click the bush and do so.
         val bush: SceneObject? = SceneObjectQuery.newQuery().name(bushName).option("Cultivate").results().nearest()
         if (bush != null) {
-            //Headbar wasn't going away fast enough when finished with this strategy, so i ditched this for the animDeadCheck.
-//            if (player.headbars.none { it.id == 13 }) {
-                println("Interacted bush: ${bush.interact("Cultivate")}")
-//            } else {
-//                println("Cultivating headbar active, no action needed.")
-//            }
+            if (useCompost) {
+                if (VarManager.getVarbitValue(Bush.entries[bushType.get()].varbitId) == 1 || !bush.name!!.contains("bare")) {
+                    println("Bush already fertilized, or not elligible.")
+                } else {
+                    println("Bush is not fertilized, attempting...")
+                    if (!Backpack.contains("Compost") && !Backpack.contains("Supercompost")) {
+                        println("No compost in backpack, heading to resupply.")
+                        botState = BotState.BANKING
+                        return random.nextLong(350, 768)
+                    }
+                    var compost = ComponentQuery.newQuery(1473).componentIndex(5).itemName("Supercompost").results().firstOrNull()
+                    if (compost == null)
+                        compost = ComponentQuery.newQuery(1473).componentIndex(5).itemName("Compost").results().firstOrNull()
+                    if (compost != null) {
+                        println("Compost found, selecting it...")
+                        if (MiniMenu.interact(SelectableAction.SELECTABLE_COMPONENT.type, 0, compost.subComponentIndex, 96534533)) {
+                            Execution.delay(random.nextLong(650,1456))
+                            println("Compost selected, fertilizing...")
+                            MiniMenu.interact(SelectableAction.SELECT_OBJECT.type, bush.id, bush.coordinate!!.x, bush.coordinate!!.y)
+                            Execution.delay(random.nextLong(678, 1245))
+                        } else {
+                            println("Failed to select compost.")
+                        }
+                    } else {
+                        println("Compost not found.")
+                    }
+                }
+            }
+            println("Interacted bush: ${bush.interact("Cultivate")}")
         } else {
             println("Bush not found.")
         }
